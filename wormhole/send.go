@@ -95,7 +95,7 @@ func (c *Client) SendText(ctx context.Context, msg string, opts ...SendOption) (
 			return
 		}
 
-		err = clientProto.ReadPake()
+		err = clientProto.ReadPake(ctx)
 		if err != nil {
 			sendErr(err)
 			return
@@ -229,8 +229,32 @@ func (c *Client) sendFileDirectory(ctx context.Context, offer *offerMsg, r io.Re
 
 	clientProto := newClientProtocol(ctx, rc, sideID, appID)
 
+	// Close this to interrupt a send
+	stopSendChan := make(chan struct{}, 0)
+
+	var cryptor *transportCryptor
+
+	go func() {
+		select {
+		case <-stopSendChan:
+			stopSendChan = nil
+		case <-ctx.Done():
+			if cryptor != nil {
+				cryptor.Close()
+			}
+		}
+	}()
+
 	ch := make(chan SendResult, 1)
 	go func() {
+
+		// Ensure we close the channel so the goroutine above doesn't leak
+		defer func() {
+			if stopSendChan != nil {
+				close(stopSendChan)
+			}
+		}()
+
 		var returnErr error
 		defer func() {
 			mood := rendezvous.Errory
@@ -257,7 +281,7 @@ func (c *Client) sendFileDirectory(ctx context.Context, offer *offerMsg, r io.Re
 			return
 		}
 
-		err = clientProto.ReadPake()
+		err = clientProto.ReadPake(ctx)
 		if err != nil {
 			sendErr(err)
 			return
@@ -358,7 +382,7 @@ func (c *Client) sendFileDirectory(ctx context.Context, offer *offerMsg, r io.Re
 			return
 		}
 
-		cryptor := newTransportCryptor(conn, transitKey, "transit_record_receiver_key", "transit_record_sender_key")
+		cryptor = newTransportCryptor(conn, transitKey, "transit_record_receiver_key", "transit_record_sender_key")
 
 		recordSize := (1 << 14)
 		// chunk
